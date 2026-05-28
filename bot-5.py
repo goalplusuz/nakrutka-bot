@@ -3,14 +3,16 @@ Nakrutka Bot - Telegram & Instagram uchun admin panel boti
 Kutubxonalar: pip install python-telegram-bot requests
 """
 
+import os
 import logging
+import threading
 import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -23,14 +25,13 @@ from telegram.ext import (
 )
 
 # ─── SOZLAMALAR ───────────────────────────────────────────────────────────────
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"          # @BotFather dan olingan token
-ADMIN_IDS = [123456789]                    # Admin Telegram ID lari
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8988476578:AAFhHYl6HxT6WXqZeG73Z2Jyrz9MYwPcXlM")
+ADMIN_IDS = [5111036228]   # <-- Sizning Telegram ID ingiz
 
-# Nakrutka API sozlamalari (SMMPanel yoki SocialPanel kabi xizmatlar)
-API_URL  = "https://smmPanel.net/api/v2"   # API manzili
-API_KEY  = "YOUR_API_KEY_HERE"             # API kalit
+API_URL = os.environ.get("API_URL", "https://topsmm.uz/api/v2")
+API_KEY = os.environ.get("API_KEY", "ee66a69514f9bce940e4c8b3eea5cbb5")
 
-# ─── HOLATLAR (ConversationHandler uchun) ────────────────────────────────────
+# ─── HOLATLAR ────────────────────────────────────────────────────────────────
 (
     MAIN_MENU,
     SELECT_PLATFORM,
@@ -49,6 +50,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ─── RENDER UCHUN WEB SERVER (bepul tier uxlab qolmasin) ─────────────────────
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Nakrutka bot ishlayapti!")
+
+    def log_message(self, *args):
+        pass  # server loglarini o'chirish
+
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    logger.info(f"Web server port {port} da ishga tushdi")
+    server.serve_forever()
+
+
 # ─── YORDAMCHI FUNKSIYALAR ───────────────────────────────────────────────────
 
 def is_admin(user_id: int) -> bool:
@@ -56,7 +75,6 @@ def is_admin(user_id: int) -> bool:
 
 
 def api_request(action: str, **kwargs) -> dict:
-    """API ga so'rov yuborish"""
     payload = {"key": API_KEY, "action": action, **kwargs}
     try:
         r = requests.post(API_URL, data=payload, timeout=15)
@@ -74,7 +92,6 @@ def get_balance() -> str:
 
 
 def get_services_list() -> list:
-    """Barcha xizmatlar ro'yxatini olish"""
     res = api_request("services")
     if isinstance(res, list):
         return res
@@ -149,21 +166,24 @@ def confirm_keyboard():
 
 
 def back_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Asosiy menyu", callback_data="back_main")]])
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data="back_main")]]
+    )
 
 
-# ─── XIZMAT ID XARITASI (API dagi real ID larga moslashtiring) ───────────────
+# ─── XIZMAT ID XARITASI ───────────────────────────────────────────────────────
+# API dagi real service ID larga moslashtiring!
 SERVICE_MAP = {
     # Telegram
-    "svc_tg_members":   {"id": 1001, "name": "Telegram a'zolar",       "min": 100,  "max": 100000},
-    "svc_tg_views":     {"id": 1002, "name": "Telegram post ko'rish",   "min": 100,  "max": 1000000},
-    "svc_tg_reactions": {"id": 1003, "name": "Telegram reaksiyalar",    "min": 10,   "max": 10000},
-    "svc_tg_votes":     {"id": 1004, "name": "Telegram ovozlar",        "min": 10,   "max": 5000},
+    "svc_tg_members":   {"id": 1001, "name": "Telegram a'zolar",     "min": 100,  "max": 100000},
+    "svc_tg_views":     {"id": 1002, "name": "Telegram post ko'rish", "min": 100,  "max": 1000000},
+    "svc_tg_reactions": {"id": 1003, "name": "Telegram reaksiyalar",  "min": 10,   "max": 10000},
+    "svc_tg_votes":     {"id": 1004, "name": "Telegram ovozlar",      "min": 10,   "max": 5000},
     # Instagram
-    "svc_ig_followers": {"id": 2001, "name": "Instagram followers",     "min": 100,  "max": 50000},
-    "svc_ig_likes":     {"id": 2002, "name": "Instagram likes",         "min": 50,   "max": 100000},
-    "svc_ig_views":     {"id": 2003, "name": "Instagram views",         "min": 100,  "max": 500000},
-    "svc_ig_comments":  {"id": 2004, "name": "Instagram comments",      "min": 10,   "max": 5000},
+    "svc_ig_followers": {"id": 2001, "name": "Instagram followers",   "min": 100,  "max": 50000},
+    "svc_ig_likes":     {"id": 2002, "name": "Instagram likes",       "min": 50,   "max": 100000},
+    "svc_ig_views":     {"id": 2003, "name": "Instagram views",       "min": 100,  "max": 500000},
+    "svc_ig_comments":  {"id": 2004, "name": "Instagram comments",    "min": 10,   "max": 5000},
 }
 
 
@@ -191,7 +211,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # ── Asosiy menyu ──
     if data == "back_main":
         await query.edit_message_text(
             "🏠 <b>Asosiy Menyu</b>\nXizmatni tanlang:",
@@ -200,7 +219,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN_MENU
 
-    # ── Platform tanlash ──
     elif data == "platform_telegram":
         ctx.user_data["platform"] = "telegram"
         await query.edit_message_text(
@@ -219,23 +237,21 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return SELECT_SERVICE
 
-    # ── Xizmat tanlash ──
     elif data in SERVICE_MAP:
         svc = SERVICE_MAP[data]
         ctx.user_data["service_key"] = data
-        ctx.user_data["service"]     = svc
+        ctx.user_data["service"] = svc
         await query.edit_message_text(
             f"✅ Tanlangan: <b>{svc['name']}</b>\n\n"
             f"📏 Min: <b>{svc['min']}</b> | Max: <b>{svc['max']}</b>\n\n"
             f"🔗 Endi link yuboring:\n"
-            f"<i>Misol (Telegram kanal): https://t.me/kanal_nomi</i>\n"
-            f"<i>Misol (Instagram profil): https://instagram.com/username</i>",
+            f"<i>Misol (Telegram): https://t.me/kanal_nomi</i>\n"
+            f"<i>Misol (Instagram): https://instagram.com/username</i>",
             parse_mode="HTML",
             reply_markup=back_keyboard(),
         )
         return ENTER_LINK
 
-    # ── Balans ──
     elif data == "balance":
         balance_text = get_balance()
         await query.edit_message_text(
@@ -245,12 +261,10 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN_MENU
 
-    # ── Xizmatlar ro'yxati ──
     elif data == "services_list":
         await query.edit_message_text("⏳ Xizmatlar yuklanmoqda...", reply_markup=None)
         services = get_services_list()
         if services:
-            # Faqat birinchi 20 tasini ko'rsatish
             lines = []
             for s in services[:20]:
                 lines.append(
@@ -259,11 +273,10 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             text = "📊 <b>Xizmatlar Ro'yxati</b> (birinchi 20 ta):\n\n" + "\n\n".join(lines)
         else:
-            text = "❌ Xizmatlar ro'yxatini olishda xato yuz berdi."
+            text = "❌ Xizmatlar ro'yxatini olishda xato."
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=back_keyboard())
         return MAIN_MENU
 
-    # ── Buyurtmalar ──
     elif data == "my_orders":
         await query.edit_message_text("⏳ Buyurtmalar yuklanmoqda...", reply_markup=None)
         orders = get_orders_list()
@@ -281,7 +294,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=back_keyboard())
         return MAIN_MENU
 
-    # ── Buyurtma tekshirish ──
     elif data == "check_order":
         await query.edit_message_text(
             "🔍 <b>Buyurtma Tekshirish</b>\n\nBuyurtma ID raqamini yuboring:",
@@ -290,7 +302,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return CHECK_ORDER
 
-    # ── Tasdiqlash ──
     elif data == "confirm_yes":
         return await process_order(update, ctx)
 
@@ -302,7 +313,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN_MENU
 
-    # ── Yordam ──
     elif data == "help":
         await query.edit_message_text(
             "ℹ️ <b>Yordam</b>\n\n"
@@ -345,7 +355,7 @@ async def receive_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def receive_quantity(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    svc  = ctx.user_data.get("service", {})
+    svc = ctx.user_data.get("service", {})
 
     if not text.isdigit():
         await update.message.reply_text("❗ Faqat raqam kiriting:")
@@ -377,8 +387,8 @@ async def process_order(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.edit_message_text("⏳ Buyurtma joylashtirilmoqda...")
 
-    svc      = ctx.user_data.get("service", {})
-    link     = ctx.user_data.get("link", "")
+    svc = ctx.user_data.get("service", {})
+    link = ctx.user_data.get("link", "")
     quantity = ctx.user_data.get("quantity", 0)
 
     result = place_order(
@@ -413,34 +423,34 @@ async def receive_order_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return CHECK_ORDER
 
     order_id = int(text)
-    result   = check_order_status(order_id)
+    result = check_order_status(order_id)
 
     if "status" in result:
         status = {
-            "Pending":    "⏳ Kutilmoqda",
-            "In progress":"🔄 Bajarilmoqda",
-            "Completed":  "✅ Bajarildi",
-            "Partial":    "⚠️ Qisman bajarildi",
-            "Canceled":   "❌ Bekor qilindi",
+            "Pending":     "⏳ Kutilmoqda",
+            "In progress": "🔄 Bajarilmoqda",
+            "Completed":   "✅ Bajarildi",
+            "Partial":     "⚠️ Qisman bajarildi",
+            "Canceled":    "❌ Bekor qilindi",
         }.get(result["status"], result["status"])
 
         text_out = (
             f"📦 <b>Buyurtma #{order_id} Holati</b>\n\n"
             f"📊 Holat: <b>{status}</b>\n"
             f"⬆️ Start count: {result.get('start_count', '—')}\n"
-            f"✅ Bajarildi: {result.get('remains', '—')} qoldi\n"
+            f"✅ Qoldi: {result.get('remains', '—')}\n"
             f"🔧 Xizmat: {result.get('service', '—')}"
         )
     else:
-        error   = result.get("error", "Noma'lum xato")
+        error = result.get("error", "Noma'lum xato")
         text_out = f"❌ Buyurtma topilmadi yoki xato:\n{error}"
 
     await update.message.reply_text(
         text_out,
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Asosiy menyu", callback_data="back_main")]
-        ]),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data="back_main")]]
+        ),
     )
     return MAIN_MENU
 
@@ -461,12 +471,8 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            MAIN_MENU: [
-                CallbackQueryHandler(button_handler),
-            ],
-            SELECT_SERVICE: [
-                CallbackQueryHandler(button_handler),
-            ],
+            MAIN_MENU: [CallbackQueryHandler(button_handler)],
+            SELECT_SERVICE: [CallbackQueryHandler(button_handler)],
             ENTER_LINK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_link),
                 CallbackQueryHandler(button_handler),
@@ -475,9 +481,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_quantity),
                 CallbackQueryHandler(button_handler),
             ],
-            CONFIRM_ORDER: [
-                CallbackQueryHandler(button_handler),
-            ],
+            CONFIRM_ORDER: [CallbackQueryHandler(button_handler)],
             CHECK_ORDER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order_id),
                 CallbackQueryHandler(button_handler),
@@ -496,4 +500,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # Render bepul tier uchun web server parallel ishga tushiriladi
+    threading.Thread(target=run_web_server, daemon=True).start()
     main()
